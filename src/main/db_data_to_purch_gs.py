@@ -86,31 +86,6 @@ def load_orders_data(months):
     Загружает только конкретные колонки для стабильности.
     """
 
-    # columns = [
-    #     "id", "guid", "document_number",
-    #     "document_created_at::date AS document_created_at",
-    #     "supply_date::date AS supply_date",
-    #     "local_vendor_code", "product_name", "event_status", "quantity",
-    #     "amount_with_vat", "amount_without_vat", "supplier_name", "supplier_code",
-    #     "update_document_datetime::date AS update_document_datetime",
-    #     "author_of_the_change", "our_organizations_name",
-    #     "warehouse_id", "is_valid", "in_acceptance",
-    #     "created_at::date AS created_at",
-    #     "is_printed_barcode", "acceptance_completed",
-    #     "expected_receipt_date::date AS expected_receipt_date",
-    #     "actual_quantity", "currency",
-    #     "unit_price", "last_purchase_price", "last_purchase_supplier", "payment_indicator",
-    #     "payment_document_number", "shipment_date::date AS shipment_date",
-    #     "receipt_transaction_number", "cancelled_due_to", "comment", "planned_cost"
-    # ]
-    # cols_str = ", ".join(columns)
-    # query = f'''
-    # SELECT {cols_str}
-    # FROM ordered_goods_from_buyers
-    # WHERE is_valid = TRUE
-    #   AND update_document_datetime >= '2025-05-01' --NOW() - INTERVAL '{months} months';
-    # '''
-
     query = '''
         select
         main.id,
@@ -186,23 +161,25 @@ def load_supply_data(months):
 
 def load_wb_supplies():
     query = '''
-    SELECT DISTINCT ON (wsg.id, wsg.vendor_code)
-        wsg.id                                   AS "Номер поставки",
-        ws.supply_date                           AS "Плановая дата поставки",
-        ws.fact_date                             AS "Фактическая дата поставки",
-        ws.status_id                             AS "Статус",
-        wsg.quantity                              AS "Добавлено в поставку",
-        wsg.unloading_quantity                    AS "Раскладывается",
-        wsg.accepted_quantity                     AS "Принято, шт",
-        wsg.ready_for_sale_quantity               AS "Поступило в продажу",
-        wsg.vendor_code                          AS "Артикул продавца",
-        wsg.nm_id                                AS "Артикул WB",
-        wsg.supplier_box_amount                  AS "Указано в упаковке, шт"
-    FROM wb_supplies_goods wsg
-    LEFT JOIN wb_supplies ws 
+        SELECT DISTINCT ON (ws.id)
+        ws.id  AS "Номер поставки",
+        ws.supply_date AS "Плановая дата поставки",
+        ws.fact_date  AS "Фактическая дата поставки",
+        ws.status_id  AS "Статус",
+        wsg.quantity  AS "Добавлено в поставку",
+        wsg.unloading_quantity  AS "Раскладывается",
+        wsg.accepted_quantity AS "Принято, шт",
+        wsg.ready_for_sale_quantity AS "Поступило в продажу",
+        wsg.vendor_code AS "Артикул продавца",
+        wsg.nm_id AS "Артикул WB",
+        wsg.supplier_box_amount AS "Указано в упаковке, шт",
+        a.account
+    FROM wb_supplies ws
+    LEFT JOIN wb_supplies_goods wsg 
         ON wsg.id = ws.id
-    WHERE ws.create_date >= NOW() - INTERVAL '2 months'
-    ORDER BY wsg.id, wsg.vendor_code, ws.updated_date DESC, wsg.created_at DESC;
+    LEFT JOIN article a
+        USING(nm_id)
+    WHERE ws.create_date >= NOW() - INTERVAL '2 months';
     '''
     return get_df_from_db(query)
 
