@@ -272,7 +272,9 @@ def add_formatted_rows(spreadsheet, sh, new_items_data, new_items_idx):
 
             # Replace {cell_num} in formulas
             formatted_row = [
-                cell.format(cell_num=cell_num) if isinstance(cell, str) and '{cell_num}' in cell else cell
+                cell.replace("{cell_num}", str(cell_num))
+                if isinstance(cell, str) and "{cell_num}" in cell
+                else cell
                 for cell in row
             ]
             rows_to_append.append(formatted_row)
