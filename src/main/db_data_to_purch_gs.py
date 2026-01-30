@@ -161,26 +161,24 @@ def load_supply_data(months):
 
 def load_wb_supplies():
     query = '''
-        SELECT DISTINCT ON (ws.id)
-        ws.id  AS "Номер поставки",
-        ws.supply_date AS "Плановая дата поставки",
-        ws.fact_date  AS "Фактическая дата поставки",
-        ws.status_id  AS "Статус",
-        wsg.quantity  AS "Добавлено в поставку",
-        wsg.unloading_quantity  AS "Раскладывается",
-        wsg.accepted_quantity AS "Принято, шт",
-        wsg.ready_for_sale_quantity AS "Поступило в продажу",
-        wsg.vendor_code AS "Артикул продавца",
-        wsg.nm_id AS "Артикул WB",
-        wsg.supplier_box_amount AS "Указано в упаковке, шт",
-        a.account
-    FROM wb_supplies ws
-    LEFT JOIN wb_supplies_goods wsg 
-        ON wsg.id = ws.id
-    LEFT JOIN article a
-        USING(nm_id)
-    WHERE ws.create_date >= NOW() - INTERVAL '2 months';
-    '''
+        SELECT DISTINCT ON (wsg.id, wsg.vendor_code)
+            wsg.id                                   AS "Номер поставки",
+            ws.supply_date                           AS "Плановая дата поставки",
+            ws.fact_date                             AS "Фактическая дата поставки",
+            ws.status_id                             AS "Статус",
+            wsg.quantity                              AS "Добавлено в поставку",
+            wsg.unloading_quantity                    AS "Раскладывается",
+            wsg.accepted_quantity                     AS "Принято, шт",
+            wsg.ready_for_sale_quantity               AS "Поступило в продажу",
+            wsg.vendor_code                          AS "Артикул продавца",
+            wsg.nm_id                                AS "Артикул WB",
+            wsg.supplier_box_amount                  AS "Указано в упаковке, шт"
+        FROM wb_supplies_goods wsg
+        LEFT JOIN wb_supplies ws 
+            ON wsg.id = ws.id
+        WHERE ws.create_date >= NOW() - INTERVAL '2 months'
+        ORDER BY wsg.id, wsg.vendor_code, ws.updated_date DESC, wsg.created_at DESC;
+        '''
     return get_df_from_db(query)
 
 
