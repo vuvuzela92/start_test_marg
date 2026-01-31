@@ -28,7 +28,12 @@ load_dotenv()
 
 
 # ---- SET UP ----
-BASE_DIR = Path(__file__).resolve().parents[2]
+try:
+    BASE_DIR = Path(__file__).resolve().parents[2]
+except NameError:
+    BASE_DIR = Path.cwd().parents[2]
+CREDS_PATH = BASE_DIR / os.getenv("CREDS_DIR") / os.getenv('CREDS_FILE')
+
 CREDS_PATH = BASE_DIR / os.getenv("CREDS_DIR") / os.getenv('CREDS_FILE')
 
 
@@ -612,22 +617,58 @@ if __name__ == "__main__":
 
 
     # ----- 5. Обновление вилдов и клиентов -----
-
+    # Получаем актуальные данные по товарам
     info = load_vendor_codes_info()
-    vendorcodes = [[info[i].get('local_vendor_code', '')] for i in articles_sorted if i in info]
-    accounts = [[str(info[i].get('account', '')).upper()] for i in articles_sorted if i in info]
-    categories = [[info[i].get('category', '')] for i in articles_sorted if i in info]
+
+    # получаем все значения, в которых будем актуализировать вилды, аккаунты и категории
+    values = sh.get_values(f"A{values_first_row-1}:D{sh_len}")
+
+    headers = values[0]      # первая строка — заголовки
+    data = values[1:]        # остальные строки — данные
+
+    # добавляем колонки с вилдами, аккаунтами и категориями
+    goods_range_df = pd.DataFrame(data, columns=headers)
+    # Приводим артикул к числовому формату
+    goods_range_df['Артикул'] = goods_range_df['Артикул'].astype(int)
     
-    sh.update(values = vendorcodes, range_name = f"{METRIC_TO_COL['wild_col']}{values_first_row}:{METRIC_TO_COL['wild_col']}{sh_len}")
-    logger.info('Информация по вилдам успешно обновлена')
+    # Приводим данные из БД к датафрейму для дальнейшей актуализации финального датафрейма
+    info_df = (
+        pd.DataFrame.from_dict(info, orient='index')
+        .reset_index()
+        .rename(columns={'index': 'Артикул'})
+    )
 
-    sh.update(values = accounts, range_name = f"{METRIC_TO_COL['client_col']}{values_first_row}:{METRIC_TO_COL['client_col']}{sh_len}")
-    logger.info('Информация по кабинетам успешно обновлена')
+    # Объединяем данные
+    merged_df = goods_range_df.merge(info_df, 
+                                    on='Артикул',
+                                    how='left',
+                                    suffixes=('','_new')
+                                    )
 
-    sh.update(values = categories, range_name = f"{METRIC_TO_COL['category_col']}{values_first_row}:{METRIC_TO_COL['category_col']}{sh_len}")
-    logger.info('Информация по категориям успешно обновлена')
+    # Актуализируем данные (перезаписываем). если в info есть значение → берём его. если нет → оставляем старое
+    merged_df['wild'] = merged_df['local_vendor_code'].combine_first(merged_df['wild'])
+    merged_df['ЛК'] = merged_df['account'].combine_first(merged_df['ЛК'])
+    merged_df['Предмет'] = merged_df['category'].combine_first(merged_df['Предмет'])
 
+    # Убираем технические колонки
+    goods_range_df_updated = merged_df[
+        ['Артикул', 'Предмет', 'ЛК', 'wild']
+    ]
 
+    # Преобразуем DataFrame → Google Sheets формат. Google Sheets принимает list[list], без заголовков.
+    values = goods_range_df_updated.values.tolist()
+    # Формируем диапазон для обновления
+    rows_count = len(values) # Количество колонок
+    end_row = values_first_row + rows_count - 1 # Конец диапазона
+    # Диапазон обновления
+    range_to_update = f"A{values_first_row}:D{end_row}"
+
+    # Обновляем данные в гугл-таблице
+    logger.info(
+        f"Updating Google Sheet range {range_to_update} "
+        f"with {rows_count} rows"
+    )
+    sh.update(range_to_update, values, value_input_option='USER_ENTERED')
 
 
     # ----- юнит -----
