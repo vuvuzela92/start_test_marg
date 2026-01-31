@@ -1,6 +1,7 @@
 # ---- IMPORTS ----
 
 # making it work for cron
+from pathlib import Path
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
@@ -27,13 +28,14 @@ from utils.utils import load_api_tokens
 from utils.my_db_functions import fetch_db_data_into_dict, create_connection_w_env
 
 from new_adv import get_all_adv_data, processed_adv_data
+from  pathlib import Path
 from dotenv import load_dotenv
 load_dotenv()
 
 
 # ---- SET UP ----
-
-CREDS_PATH = os.getenv('CREDS_PATH')
+BASE_DIR = Path(__file__).resolve().parents[2]
+CREDS_PATH = BASE_DIR / os.getenv("CREDS_DIR") / os.getenv('CREDS_FILE')
 
 METRIC_TO_COL = {
     "Сумма заказов": "AX",
@@ -90,7 +92,7 @@ METRIC_RU = {
 
 # ---- LOGS ----
 
-LOGS_PATH = os.getenv("LOGS_PATH")
+LOGS_PATH = BASE_DIR / os.getenv("LOGS_DIR") / os.getenv('LOG_FILE')
 
 os.makedirs(LOGS_PATH, exist_ok=True)
 logging.basicConfig(
@@ -288,18 +290,6 @@ def get_full_prices_from_API_WB(filter_articles = None):
         try: 
             # берём данные из апи
             api_token = tokens[account]
-            # data = my_gspread.get_data_offset(
-            #     url,
-            #     {"Authorization": api_token},
-            #     extract_callback=lambda r: r['data']['listGoods'],
-            #     return_keys=['nmId', 'sizes']
-            # )
-
-            # wb_articles_prices = {
-            #     item['nmId']: item['sizes'][0]['discountedPrice']
-            #     for item in data if item.get('sizes')
-            # }
-
             data = my_gspread.get_data_offset(url,
                                               {"Authorization": api_token},
                                               extract_callback = lambda r: r['data']['listGoods'],
@@ -757,24 +747,16 @@ if __name__ == "__main__":
     pilot_sheet_name = os.getenv('AUTOPILOT_SHEET_NAME')
 
     sh = my_gspread.connect_to_remote_sheet(pilot_table_name, pilot_sheet_name) # prod
-
-    # local sheet for tests
-    # sh = my_gspread.connect_to_local_sheet(os.getenv('LOCAL_TEST_TABLE'), pilot_sheet_name)
     
     # заголовки для подсчёта номера колонки
     сurr_headers = None #sh.row_values(2)
     col_num = 7
     values_first_row = 4
     sh_len = sh.row_count
-    # sos_page = my_gspread.connect_to_remote_sheet(os.getenv('NEW_ITEMS_TABLE_NAME'), os.getenv('NEW_ITEMS_ARTICLES_SHEET_NAME')) # prod
-    # articles_sorted = [int(i) for i in sos_page.col_values(1)] # prod
 
     # for tests
     articles_raw = sh.col_values(1)[3:]
     articles_sorted = [int(n) for n in articles_raw]
-
-    # tiny list of articles for test
-    # articles_sorted = [577506829, 238875938, 155430993] # [absent_from_website, no_stock, active]
 
 
     # берём метрики (рус и англ) из файла

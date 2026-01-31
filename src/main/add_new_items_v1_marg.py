@@ -1,23 +1,24 @@
-#!/usr/bin/env python
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from utils.my_gspread import connect_to_local_sheet, get_col_index, remove_duplicates_from_col, delete_rows_by_index, connect_to_remote_sheet, find_gscol_num_by_name, remove_duplicates_by_val, find_duplicates_by_val_and_warn
-from utils.my_db_functions import list_to_sql_select, fetch_db_data_into_dict
-from utils.my_general import open_json
+
+import requests
 import pandas as pd
 import gspread
-import logging
 import os
 
-# to do:
-# maybe restructure main
-# add flag 'done' to the Новый товар
-# unit: deleting formula from CQ
-# add api error processing
+from utils.logger import setup_logger
+from utils.my_db_functions import fetch_db_data_into_list
+from utils.my_gspread import get_col_index, remove_duplicates_from_col, connect_to_remote_sheet, remove_duplicates_by_val, find_duplicates_by_val_and_warn
+from utils.my_api import get_product_by_nmid
+from utils.my_general import open_json
+from pathlib import Path
+import requests
+import pandas as pd
+import gspread
+import os
 
-# formatting -- done --
-
+logger = setup_logger("add_new_items.log")
 
 # --- thoughts ---
 # add one more status to Новый товар to know when to actually add an item
@@ -43,22 +44,6 @@ import os
     # a. universal function for rows delete from any table  --- done ---
     # b. function for rows delete from 3 basic tables (unit, pilot, adv analysis)   --- done --- (but needs remote check)
     # c. function for deleting wilds from the Расчёт закупки 
-
-
-# Notes:
-# ! в закупках используем робота Кости
-# gspread works fine with dropdown values
-
-
-os.makedirs('logs', exist_ok=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("logs/add_new_items.log",  encoding='utf-8'),
-        logging.StreamHandler()
-    ]
-)
 
 
 # ---------- take data from Новый товар ----------
@@ -113,123 +98,11 @@ def extract_new_sup_codes_and_skus(dct):
     new_skus = set()            
 
     for card in dct:
-        new_sup_codes.add(card['supplier_code_unique'])
+        new_sup_codes.add(str(card['supplier_code_unique']).strip()) # 15.11 added .strip() to avoid duplicates
         sku = int(card['sku'])
         new_skus.add(sku)
     
     return new_sup_codes, new_skus
-
-
-# ---------- удаление товаров ----------
-
-def complete_delete_sku(skus_to_delete, local = False, local_base_url = None):
-    '''
-    Удаляет строки с артикулами из трёх таблиц: UNIT MAIN, Автопилот, Анализ акций
-    ! Не удаляет вилды из Сопоста !
-
-    При local = True подключается к таблице по ссылке local_base_url и ожидает, что будут три листа: 'MAIN (tested)', 'Автопилот', 'Анализ акций v 2.0'
-    '''
-
-    # check
-    if local:
-        if not local_base_url:
-            raise ValueError('Need to give local_base_url while using local = True')
-        
-    if skus_to_delete is None:
-        raise ValueError("values_to_delete can't be None") 
-    elif not isinstance(skus_to_delete, (list, tuple)):
-        skus_to_delete = [skus_to_delete]
-
-    # transform values to str for gs data compatibility
-    skus_str = [str(value) for value in skus_to_delete]
-
-    sheets_config = [
-        {
-            'table_name' : 'UNIT 2.0 (tested)',
-            'sheet_name' : 'MAIN (tested)',
-            'col_name' : 'Артикул',
-            'header_num' : 1
-        },
-        {
-            'table_name' : 'Панель управления продажами Вектор',
-            'sheet_name' : 'Автопилот',
-            'col_name' : 'Артикул',
-            'header_num' : 3
-        },
-        {
-            'table_name' : 'Анализ акций',
-            'sheet_name' : 'Анализ акций v 2.0',
-            'col_name' : 'Артикул',
-            'header_num' : 3
-        }]
-
-    for config in sheets_config:
-        try:
-            print(f"Processing: {config['sheet_name']} in {config['table_name']}")
-
-            if local:
-                sh = connect_to_local_sheet(local_base_url, config['sheet_name'])
-            else:
-                sh = connect_to_remote_sheet(config['table_name'], config['sheet_name'])
-
-            col_num = find_gscol_num_by_name(config['col_name'], sh, headers_col = config['header_num'])
-
-            delete_rows_based_on_values(sh, skus_str, col_num)
-
-        except Exception as e:
-            print(f"Failed to process {config['sheet_name']} in {config['table_name']}:\n{e}")
-
-
-
-def delete_rows_based_on_values(sh, values_to_delete, col_num, transform_to_str = True, trash_sheet = None):
-    '''
-    Удаляет строки из таблицы sh, основываясь на значениях values_to_delete из столбца col_num.
-    Принимает gs таблицу, значения для удаления и номер столбца.
-    Перед чеком преобразует values_to_delete в строки.
-
-    Аргументы:
-    sh - gs sheet
-    values_to_delete - list of target values which have to be deleted
-    col_num - number of column in sh to delete values from (starting with 1, not 0)
-    transform_to_str - если нужно преобразовать values_to_delete в str (False на случай, если данные до этого преобразуются в строки)
-    '''
-    if values_to_delete is None:
-        raise ValueError("values_to_delete can't be None") 
-    elif not isinstance(values_to_delete, (list, tuple)):
-        values_to_delete = [values_to_delete]
-
-    col_values = sh.col_values(col_num)
-
-    if transform_to_str:
-        values_str = [str(value) for value in values_to_delete]
-
-    rows_to_delete = [
-        i + 1 for i, value in enumerate(col_values)
-        if value in values_str
-    ]
-
-    if not rows_to_delete:
-        logging.info(f"{sh.title}: Duplicates aren't found, no rows to delete.")
-        return
-
-    # сортируем в обратном порядке, чтобы избежать смещения строк
-    rows_to_delete.sort(reverse=True)
-    rows_num = len(rows_to_delete)
-    logging.info(f'Found {rows_num} rows to delete')
-    print(rows_to_delete)
-
-    try:
-        c = 1
-        for row_num in rows_to_delete:
-            sh.delete_rows(row_num)
-            logging.info(f'Deleted row {row_num}: proccessed {c}/{rows_num} rows')
-
-            # trash_sheet.update()
-            c += 1
-        logging.info(f"Successfully deleted {len(rows_to_delete)} rows: {sorted(rows_to_delete, reverse=False)}")
-    except Exception as e:
-        logging.error(f"Error during deletion: {e}")
-
 
 
 def add_dummy_value_to_formulas(lst_of_formulas, value_to_replace, dummy_value_name = 'dummy_value'):
@@ -277,40 +150,6 @@ def load_last_row_w_dummy_values(sh):
     
     return row_output_prototype
 
-# row by row
-# def add_new_rows_w_formulas(sh, new_items_data, new_items_idx):
-#     """
-#     Add new rows to Google Sheet, each with:
-#       - static values at specific columns (new_items_idx)
-#       - formulas with {cell_num} placeholder updated to point to current row
-
-#     :param sh: gspread Worksheet
-#     :param new_items_data: List of lists, e.g. [[val1, val2], [val1_row2, val2_row2]]
-#     :param new_items_idx: List of column indices for the values (same for all rows)
-#     """
-#     base_row = sh.row_count + 1 
-#     prototype = load_last_row_w_dummy_values(sh)
-
-#     logging.info(f"Adding new rows with formulas sheet '{sh.title}', table '{sh.spreadsheet.title}'")
-#     try:
-#         for i, item_data in enumerate(new_items_data):
-#             row = prototype.copy()
-#             cell_num = base_row + i
-
-#             for idx, value in zip(new_items_idx, item_data):
-#                 row[idx] = value
-
-#             formatted_row = [
-#                 cell.format(cell_num=cell_num) if isinstance(cell, str) and '{cell_num}' in cell else cell
-#                 for cell in row
-#             ]
-
-#             sh.append_row(formatted_row, value_input_option='USER_ENTERED')
-#         logging.info(f"Successfully added {len(new_items_data)} rows to sheet '{sh.title}', table '{sh.spreadsheet.title}'")
-#     except Exception as e:
-#         logging.error("Failed to add new rows to 'Сопост':\n{e}")
-#         raise
-
 
 # all rows at once (no formatting)
 def add_new_rows_w_formulas(sh, new_items_data, new_items_idx):
@@ -322,7 +161,7 @@ def add_new_rows_w_formulas(sh, new_items_data, new_items_idx):
     :param new_items_data: List of lists, e.g. [[val1, val2], ...]
     :param new_items_idx: List of column indices (0-based) where to insert values
     """
-    logging.info(f"Adding {len(new_items_data)} rows to sheet '{sh.title}', table '{sh.spreadsheet.title}'")
+    logger.info(f"Adding {len(new_items_data)} rows to sheet '{sh.title}', table '{sh.spreadsheet.title}'")
 
     try:
         # Get last row to extract formula template
@@ -353,10 +192,10 @@ def add_new_rows_w_formulas(sh, new_items_data, new_items_idx):
             value_input_option='USER_ENTERED'
         )
 
-        logging.info(f"Successfully added {len(rows_to_append)} rows to '{sh.title}'")
+        logger.info(f"Successfully added {len(rows_to_append)} rows to '{sh.title}'")
 
     except Exception as e:
-        logging.error(f"Failed to add new rows to '{sh.title}': {e}", exc_info=True)
+        logger.error(f"Failed to add new rows to '{sh.title}': {e}", exc_info=True)
         raise
 
 
@@ -369,7 +208,7 @@ def add_formatted_rows(spreadsheet, sh, new_items_data, new_items_idx):
     :param new_items_data: List of lists, e.g. [[val1, val2], ...]
     :param new_items_idx: List of column indices (0-based) where to insert values
     """
-    logging.info(f"Adding {len(new_items_data)} formatted rows to sheet '{sh.title}' in '{spreadsheet.title}'")
+    logger.info(f"Adding {len(new_items_data)} formatted rows to sheet '{sh.title}' in '{spreadsheet.title}'")
 
     try:
         # Get formula template from last row
@@ -378,7 +217,7 @@ def add_formatted_rows(spreadsheet, sh, new_items_data, new_items_idx):
         num_rows = len(new_items_data)
 
         if num_rows == 0:
-            logging.info(f"No rows to add for '{sh.title}'.")
+            logger.info(f"No rows to add for '{sh.title}'.")
             return
 
         # --- Step 1: Prepare data with formulas ---
@@ -392,15 +231,21 @@ def add_formatted_rows(spreadsheet, sh, new_items_data, new_items_idx):
                 row[idx] = value
 
             # Replace {cell_num} in formulas
+            # formatted_row = [
+            #     cell.format(cell_num=cell_num) if isinstance(cell, str) and '{cell_num}' in cell else cell
+            #     for cell in row
+            # ]
             formatted_row = [
-                cell.format(cell_num=cell_num) if isinstance(cell, str) and '{cell_num}' in cell else cell
+                cell.replace("{cell_num}", str(cell_num))
+                if isinstance(cell, str) and "{cell_num}" in cell
+                else cell
                 for cell in row
             ]
             rows_to_append.append(formatted_row)
 
         # --- Step 2: Append data (auto-adds rows) ---
         sh.append_rows(rows_to_append, value_input_option='USER_ENTERED')
-        logging.info(f"Data appended to '{sh.title}'.")
+        logger.info(f"Data appended to '{sh.title}'.")
 
         # --- Step 3: Copy formatting from last original row ---
         last_row_num = base_row - 1
@@ -423,12 +268,11 @@ def add_formatted_rows(spreadsheet, sh, new_items_data, new_items_idx):
             ]
         })
 
-        logging.info(f"Successfully added {num_rows} rows with formatting to '{sh.title}'")
+        logger.info(f"Successfully added {num_rows} rows with formatting to '{sh.title}'")
 
     except Exception as e:
-        logging.error(f"Failed to add formatted rows to '{sh.title}': {e}", exc_info=True)
+        logger.error(f"Failed to add formatted rows to '{sh.title}': {e}", exc_info=True)
         raise
-
 
 
 def define_num_index_range_by_col_names(colname_start, colname_end, headers = None, sh = None, headers_row_num = 1, n_cols_for_check = None):
@@ -443,7 +287,7 @@ def define_num_index_range_by_col_names(colname_start, colname_end, headers = No
         if sh and headers_row_num:
             headers = sh.row_values(headers_row_num)
         else:
-            logging.error('Have to pass either headers, or sh and headers_row_num')
+            logger.error('Have to pass either headers, or sh and headers_row_num')
             raise ValueError
     index_start =  get_col_index(sh, colname_start, header=headers)
     index_end = get_col_index(sh, colname_end, header=headers)
@@ -452,7 +296,7 @@ def define_num_index_range_by_col_names(colname_start, colname_end, headers = No
     if n_cols_for_check and n_cols + 1 != n_cols_for_check:
         if sh is None:
             sh = 'table'
-        logging.error(f'Expected number of columns in {sh.title} - {n_cols_for_check}, fact - {n_cols}.')
+        logger.error(f'Expected number of columns in {sh.title} - {n_cols_for_check}, fact - {n_cols}.')
         raise ValueError
     
     items_indexes = list(range(index_start - 1, index_end))
@@ -467,7 +311,7 @@ def find_missing_values(sh, values_to_check, col_values_to_delete_from=None, col
         if col_num_to_delete_from:
             col_values_to_delete_from = sh.col_values(col_num_to_delete_from)
         else:
-            logging.error('Необходимо передать один из аргументов: col_values_to_delete_from или col_num_to_delete_from')
+            logger.error('Необходимо передать один из аргументов: col_values_to_delete_from или col_num_to_delete_from')
             return []
 
     existing_values = set(col_values_to_delete_from)
@@ -475,7 +319,7 @@ def find_missing_values(sh, values_to_check, col_values_to_delete_from=None, col
     
     duplicates = [value for value in values_to_check if str(value) in existing_values]
     if duplicates:
-        logging.info(f"Skipping {len(duplicates)} duplicate values in {sh.title}: {duplicates}")
+        logger.info(f"Skipping {len(duplicates)} duplicate values in {sh.title}: {duplicates}")
     
     return missing_values
 
@@ -512,7 +356,7 @@ def process_sheet(table, sh, comparison_col_name, output_data, output_indexes, t
         missing_values = find_missing_values(sh, new_identifiers, col_values_to_delete_from=col_values)
         
         if not missing_values:
-            logging.info(f"No new values to add to {sh.title}")
+            logger.info(f"No new values to add to {sh.title}")
             return
             
         # Filter data to only include missing items
@@ -521,14 +365,41 @@ def process_sheet(table, sh, comparison_col_name, output_data, output_indexes, t
         if filtered_data:
             add_formatted_rows(table, sh, filtered_data, output_indexes)
         else:
-            logging.info(f"No new data to add to {sh.title} after filtering")
+            logger.info(f"No new data to add to {sh.title} after filtering")
     else:
         # No filtering needed - add all data
         add_formatted_rows(table, sh, output_data, output_indexes)
 
 
+def api_add_product(id, name, photo_link, is_kit = False, share_of_kit = False, kit_components = None):
+
+    json = [
+        {
+            "id": id,
+            "name": name,
+            "is_kit": False,
+            "share_of_kit": False,
+            "photo_link": photo_link,
+            "kit_components": kit_components
+        }
+    ]
+
+    url = '/api/goods_information/add_product'
+    response = requests.post(url = url, json = json)
+
+    if response.status_code == 200:
+        logger.info(f"Запрос для создания {id} в products успешно отправлен")
+    else:
+        logger.error(f"Error: {response.status_code}\n{response.text}")
+        raise ValueError
+
+# ---- SET UP ----
+BASE_DIR = Path(__file__).resolve().parents[2]
+CREDS_PATH = BASE_DIR / os.getenv("CREDS_DIR") / os.getenv('CREDS_FILE')
+
+
 if __name__ == "__main__":
-    logging.info("Starting script execution.")
+    logger.info("Starting script execution.")
 
     # False для локальных тестов
     remote = True
@@ -538,24 +409,23 @@ if __name__ == "__main__":
     only_warn = True    # <--- поставить only_warn=False если нужно удалять дубликаты  !!!!!
 
     try:
-        my_client = gspread.service_account(filename='creds/creds.json') 
+        my_client = gspread.service_account(filename=CREDS_PATH) 
         if remote:
             new_items_table = my_client.open('Новый товар')
-            # new_items_table = my_client.open_by_url('https://docs.google.com/spreadsheets/d/1amlBwWVD37TNLnTiPVa-KPpEPUqCEayXVZN22b0cP5Y/edit?gid=508042793#gid=508042793')
             new_items_sh = new_items_table.worksheet('Для юнит')
             trash_sheet = new_items_table.worksheet('Удалено')
         else:
             local_table = my_client.open('БД универсальное')
             new_items_sh = local_table.worksheet('Для юнит')
             trash_sheet = None
-        logging.info("Connected to 'Новый товар' spreadsheet. Worksheets loaded.")
+        logger.info("Connected to 'Новый товар' spreadsheet. Worksheets loaded.")
 
         new_items = get_sku_card_from_gs_new_items(sh = new_items_sh, include_all = False)
-        logging.info('New items loaded')
+        logger.info('New items loaded')
         
         if not new_items:
-            logging.error('New items not found')
-            raise ValueError
+            logger.error('New items not found')
+            raise ValueError('New items not found')
 
         # organize new skus and supplier_ids into separate lists
         new_sup_codes, new_skus = extract_new_sup_codes_and_skus(new_items)
@@ -568,6 +438,7 @@ if __name__ == "__main__":
         else:
             unit_table = local_table
             sopost = local_table.worksheet('Сопост')
+
         # собираем из карточек инфу, которая нужна для сопоста (literally часть, которую нужно вставить, без формул)  
         new_items_unique_wilds = []
         seen = set()
@@ -589,10 +460,53 @@ if __name__ == "__main__":
         ]
         # получаем индексы для вставки значений [1, 2, 3, ...]
         sopost_items_indexes = define_num_index_range_by_col_names('предмет', 'Добавляем', sh = sopost, headers_row_num=1, n_cols_for_check=6)
-
         sopost_identifiers = [card['supplier_code_unique'] for card in new_items_unique_wilds]
         process_sheet(unit_table, sopost, 'wild', sopost_add_sku, sopost_items_indexes, 
                     trash_sheet, sopost_identifiers)
+        
+
+        # - - - new part - add data to db table products - - -
+
+        # -- Check if wilds already exist in the DB table products --
+        db_wilds = [i[0] for i in fetch_db_data_into_list('select id from products')]
+        missing_wilds = [i['supplier_code_unique'] for i in new_items_unique_wilds if i['supplier_code_unique'] not in db_wilds]
+
+        check = any('d' in i for i in missing_wilds)
+
+        if check:
+            logger.error('Found "d" in wilds :( Go clean')
+            raise ValueError
+
+        if missing_wilds and not check:
+
+            logger.info(f'Найдены вилды, которых нет в БД таблице products: {missing_wilds}')
+
+            tokens = open_json('tokens.json')
+            wild_client_match = {i['supplier_code_unique'] : str(i['client']).capitalize() for i in new_items}
+            wild_name_match = {i['supplier_code_unique'] : i['item_name'] for i in new_items}
+
+            failed_wilds = []
+
+            for w in missing_wilds:
+
+                try:
+                    card = get_product_by_nmid(tokens[wild_client_match[w]], w)
+                    photo = card[0]['photos'][0]['tm']
+                    api_add_product(id = w, name = wild_name_match[w], photo_link=photo)
+
+                except Exception as e:
+                    logger.error(f"Failed to add {w} to the products: {e}")
+                    failed_wilds.append(w)
+                    continue
+        
+            if failed_wilds:
+                logger.info(f"Следующие вилды не удалось добавить в БД products: {failed_wilds}")
+                # вот тут бы хорошо еще по индексу добавлять статус "Ошибка" в гугл таблицу - но проблема, что wildы дублируются, нужно брать последнее значение
+        else: 
+            logger.info("Didn't find wilds missing from the products DB table")
+
+        # - - - end of the logic for products - - -
+
 
         # i don't like the logic here... I want it to be like:
         # - check if the values exist is sopost
@@ -666,19 +580,19 @@ if __name__ == "__main__":
         # - - -
         # 5.5. - добавляем товар на лист Артикулы_ПУ в Новый товар (используется для обновления ПУ)
 
-        articles_sh = new_items_table.worksheet('Артикулы_ПУ')
-        articles_sh.append_rows(pilot_list)
-        logging.info("Values added to the sheet 'Артикулы_ПУ'")
+        # articles_sh = new_items_table.worksheet('Артикулы_ПУ')
+        # articles_sh.append_rows(pilot_list)
+        # logger.info("Values added to the sheet 'Артикулы_ПУ'")
 
         # - - -
 
 
         temp_df = pd.DataFrame(pilot_list, columns = ['sku', 'name', 'client', 'wild'])
         temp_df.to_excel('skus_pilot.xlsx', index = False)
-        logging.info('data for pilot is saved to excel file')
-        # process_sheet(pilot_table, pilot_sh, 'Артикул', pilot_list, [0, 1, 2, 3], trash_sheet,
-        #             new_sku_list, header_row=3)
+        logger.info('data for pilot is saved to excel file')
+        process_sheet(pilot_table, pilot_sh, 'Артикул', pilot_list, [0, 1, 2, 3], trash_sheet,
+                    new_sku_list, header_row=3)
 
     except Exception as e:
-        logging.error(f"An error occurred: {str(e)}", exc_info=True)
+        logger.error(f"An error occurred: {str(e)}", exc_info=True)
         raise

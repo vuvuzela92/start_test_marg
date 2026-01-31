@@ -22,12 +22,15 @@ from utils.my_gspread import init_client
 from utils import my_pandas, my_gspread
 from utils import my_db_functions as db
 from utils.logger import setup_logger
+from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv()
 
 
 # ---- SET UP ----
-CREDS_PATH=os.getenv('CREDS_PATH')
+BASE_DIR = Path(__file__).resolve().parents[2]
+CREDS_PATH = BASE_DIR / os.getenv("CREDS_DIR") / os.getenv('CREDS_FILE')
+
 
 UNIT_TABLE = os.getenv("UNIT_TABLE")
 UNIT_MAIN_SHEET = os.getenv("UNIT_MAIN_SHEET")
