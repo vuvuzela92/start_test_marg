@@ -14,6 +14,9 @@ import numpy as np
 import pandas as pd
 from datetime import date, timedelta
 from gspread.exceptions import APIError
+import asyncio
+import aiohttp
+from time import sleep
 
 # my packages
 from db_data_to_purch_gs import update_orders_by_regions
@@ -354,9 +357,239 @@ def update_adv_status_in_unit(unit_sh, adv_dict):
     my_gspread.add_data_to_range(unit_sh, output_data, output_range, False)
     logger.info(f'Статус рекламы успешно добавлен в диапазон {output_range}')
 
+# === Загружаем данные, полученные парсингом ===
 
-def load_and_update_feedbacks_unit(unit_sh, unit_skus):
-    feedback_data = parse_data_from_WB(articles=unit_skus, return_keys=['feedbacks'])
+async def parse_data_from_WB(session, article):
+    """Асинхронная функция, которая:
+- принимает уже созданную HTTP-сессию aiohttp
+- принимает один конкретный артикул
+- делает HTTP-запрос к WB
+- возвращает JSON-ответ или None в случае ошибки"""
+
+
+    # URL эндпоинта WB, который возвращает карточку товара
+    url = "https://card.wb.ru/cards/v4/detail"
+
+    # Параметры запроса
+    # Эти параметры WB ожидает в query string
+    params = {
+        # Тип приложения
+        "appType": 1,
+        # Валюта
+        "curr": "rub",
+        # Регион 
+        "dest": -1255987,
+        # Скидка покупателя (spp)
+        "spp": 30,
+        # Флаги, скрывающие часть данных
+        "hide_vflags": 4294967296,
+        # Типы данных, которые нужно скрыть
+        "hide_dtype": "9;11",
+        # Отключение A/B тестов
+        "ab_testing": "false",
+        # артикул товара
+        "nm": article
+    }
+
+    try:
+        # Асинхронно отправляем GET-запрос
+        async with session.get(url, params=params) as response:
+            # Если сервер вернул 200 OK —
+            # значит данные получены корректно
+            if response.status == 200:
+                # Асинхронно читаем тело ответа и парсим JSON
+                return await response.json()
+
+            # Если сервер вернул 429 —
+            # это значит "Too Many Requests" (превышен лимит)
+            if response.status == 429:
+                # Логируем ситуацию, чтобы понимать, какой артикул упёрся в лимит
+                logger.info(f"{article}: 429, sleep 10s")
+
+                # Асинхронная пауза на 10 секунд
+                # ВАЖНО: await sleep НЕ блокирует другие запросы
+                await sleep(10)
+
+                # Возвращаем None, сигнализируя, что данные не получены
+                return None
+
+    # Ловим любые исключения:
+    # проблемы сети, JSON, таймауты и т.п.
+    except Exception as e:
+        # Логируем ошибку вместе с артикулом
+        logger.error(f"{article}: ошибка {e}")
+
+        # В случае любой ошибки возвращаем None
+        return None
+
+
+async def fetch_parse_data_from_WB(articles):
+    """Асинхронная функция-оркестратор:
+    - создаёт одну HTTP-сессию
+    - запускает запросы по всем артикулам ПАРАЛЛЕЛЬНО
+    - собирает результаты"""
+    # Создаём одну общую ClientSession
+    # Это критически важно для производительности
+    async with aiohttp.ClientSession() as session:
+
+        # Создаём список coroutine-задач
+        # На этом этапе запросы ЕЩЁ НЕ выполняются
+        tasks = [
+            parse_data_from_WB(session, art)
+            for art in articles
+        ]
+
+        # Передаём все задачи event loop
+        # asyncio.gather запускает их конкурентно
+        results = await asyncio.gather(*tasks)
+
+        # Собираем удобный словарь:
+        # {артикул: результат_запроса}
+        return dict(zip(articles, results))
+    
+
+def proceed_parse_data(
+    data,
+    return_keys=None,
+    handle_nested_keys=None,
+    show_errors=False
+):
+    '''
+    Получает данные товаров с WB по артикулам. Возвращает:
+    - При return_keys: {артикул: [значения, 'ключей']}
+    - Без return_keys: полные данные products[0]
+    Поддержка вложенных полей: handle_nested_keys=[['путь', 'к', 'полю']]
+    Пример: [['sizes', 0, 'price']] → data['sizes'][0]['price']
+    '''
+
+    # Счётчик артикулов, по которым данные не удалось получить
+    not_found = 0
+
+    # Итоговый словарь:
+    # ключ   — артикул
+    # значение — либо список значений, либо весь JSON товара
+    result = {}
+
+    # data — это результат предыдущего асинхронного парсинга:
+    # {art: response_json}
+    # Проходимся по каждому артикулу и его данным
+    for art, d in data.items():
+        try:
+            # В ответе WB список товаров лежит в d['products']
+            # Обычно он содержит ровно один элемент
+            js = d['products'][0]
+
+            # Отладочный вывод — показывает весь JSON карточки
+            # print(js)
+
+            # === ЕСЛИ ПОЛЬЗОВАТЕЛЬ УКАЗАЛ return_keys ===
+            # значит, мы возвращаем не весь JSON,
+            # а только конкретные поля
+            if return_keys:
+
+                # Список значений для одного артикула
+                # порядок соответствует return_keys
+                art_values = []
+
+                # Проходимся по каждому ключу,
+                # который пользователь хочет получить
+                for key in return_keys:
+
+                    # Пытаемся получить значение по верхнему уровню
+                    value = js.get(key, None)
+
+                    # === ЕСЛИ УКАЗАНЫ ВЛОЖЕННЫЕ КЛЮЧИ ===
+                    # handle_nested_keys — список путей вида:
+                    # ['sizes', 0, 'price', 'total']
+                    if handle_nested_keys:
+                        for path in handle_nested_keys:
+
+                            # Проверяем:
+                            # относится ли текущий путь к этому ключу
+                            # path[0] — корневой ключ
+                            if path[0] == key:
+                                try:
+                                    # Начинаем спуск по вложенности
+                                    nested_value = js
+
+                                    # Последовательно проваливаемся
+                                    # по всем уровням вложенности
+                                    for nest in path:
+                                        nested_value = nested_value[nest]
+
+                                    # Если всё успешно — переопределяем value
+                                    value = nested_value
+
+                                except Exception as e:
+                                    # Если вложенность не существует —
+                                    # возвращаем None
+                                    value = None
+
+                                    # По желанию пользователя
+                                    # логируем подробную ошибку
+                                    if show_errors:
+                                        logger.info(
+                                            f'Вложенное значение {key} '
+                                            f'для артикула {art} не существует. '
+                                            f'Возвращено None. Ошибка: {e}'
+                                        )
+
+                                    # Переходим к следующему пути
+                                    continue
+
+                    # Добавляем значение (или None) в список
+                    art_values.append(value)
+
+                # Сохраняем результат для артикула
+                result[art] = art_values
+
+            # === ЕСЛИ return_keys НЕ УКАЗАН ===
+            # возвращаем весь JSON карточки товара
+            else:
+                result[art] = js
+
+        # === ЕСЛИ products пустой или структура неожиданная ===
+        except (IndexError, KeyError):
+            logger.info(
+                f'Товар с артикулом {art} не найден '
+                f'или отсутствуют данные на ВБ'
+            )
+            not_found += 1
+
+            # Если ожидался список значений —
+            # возвращаем список None нужной длины
+            result[art] = (
+                [None] * len(return_keys)
+                if return_keys
+                else None
+            )
+
+        # === ЛЮБАЯ ДРУГАЯ ОШИБКА ===
+        except Exception as e:
+            logger.info(
+                f'Возникла проблема при парсинге данных '
+                f'по артикулу {art} с сайта WB: {e}'
+            )
+            not_found += 1
+
+            # Поведение такое же, как выше
+            result[art] = (
+                [None] * len(return_keys)
+                if return_keys
+                else None
+            )
+
+    # Итоговая статистика
+    logger.info(
+        f'Найдены данные для '
+        f'{len(data) - not_found} из {len(data)} артикулов.'
+    )
+
+    # Возвращаем словарь результатов
+    return result
+
+def load_and_update_feedbacks_unit(unit_sh, parse_data):
+    feedback_data = proceed_parse_data(parse_data, return_keys=['feedbacks'])
     output_data = [value for key, value in feedback_data.items()]
     ouput_range = my_gspread.define_range('Кол-во отзывов ВБ', unit_sh.row_values(1), 1, 2, unit_sh.row_count)
     my_gspread.add_data_to_range(unit_sh, output_data, ouput_range, True)
@@ -670,6 +903,7 @@ if __name__ == "__main__":
     )
     sh.update(range_to_update, values, value_input_option='USER_ENTERED')
 
+    articles = goods_range_df_updated['Артикул'].to_list()
 
     # ----- юнит -----
 
@@ -720,6 +954,8 @@ if __name__ == "__main__":
 
     logger.info('Updating the feedbacks in Unit')
 
-    load_and_update_feedbacks_unit(unit_sh, unit_skus)
+    # Асинхронно собираем данные с ВБ
+    parse_data = asyncio.run(fetch_parse_data_from_WB(articles))
+    load_and_update_feedbacks_unit(unit_sh, parse_data)
 
     logger.info('Выполнение скрипта завершено')
