@@ -267,10 +267,16 @@ def insert_wb_supplies_goods(records, conn):
     #     row = {rename_map[k]: v for k, v in item.items() if k in rename_map}
     #     normalized.append(row)
 
+    REQUIRED_FIELDS = ("id", "vendor_code")
+
     for item in records:
         row = {rename_map[k]: v for k, v in item.items() if k in rename_map}
-        if row.get("id") is not None:
-            normalized.append(row)
+
+        # проверяем обязательные поля
+        if any(row.get(field) is None for field in REQUIRED_FIELDS):
+            continue
+
+        normalized.append(row)
 
     if not normalized:
         return
