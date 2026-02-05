@@ -14,12 +14,15 @@ import time
 import logging
 import requests
 import os
+from pathlib import Path
 
 # from .env_loader import *
 from dotenv import load_dotenv  
 load_dotenv()
 
-TOKENS_PATH = os.getenv("TOKENS_PATH")
+
+BASE_DIR = Path(__file__).resolve().parents[2]
+TOKENS_PATH = BASE_DIR / os.getenv("CREDS_DIR") / os.getenv("TOKENS_FILE")
 
 # Функция для загрузки API токенов из файла tokens.json
 def load_api_tokens(filename = TOKENS_PATH):
