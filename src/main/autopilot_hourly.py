@@ -766,6 +766,13 @@ if __name__ == "__main__":
     try:
         
 
+        # ----- funnel -----
+        fun_data, fun_headers = collect_full_funnel_data(articles_sorted)
+
+        push_data_static_range(sh = sh, dct = fun_data, metric_names = fun_headers, gsheet_headers = сurr_headers, matched_metrics = METRIC_RU,
+                articles_sorted = articles_sorted, col_num = col_num, values_first_row = values_first_row, sh_len=sh_len)
+
+
         # ----- выгрузка остатков из юнитки -----
         try:
             unit_sh = my_gspread.connect_to_remote_sheet(os.getenv("UNIT_TABLE"), os.getenv("UNIT_MAIN_SHEET"))
@@ -834,13 +841,6 @@ if __name__ == "__main__":
         adv_header = 'adv_spend'
 
         push_data_static_range(sh = sh, dct = adv_spend, metric_names = adv_header, gsheet_headers = сurr_headers, matched_metrics = METRIC_RU,
-                articles_sorted = articles_sorted, col_num = col_num, values_first_row = values_first_row, sh_len=sh_len)
-
-
-        # ----- funnel -----
-        fun_data, fun_headers = collect_full_funnel_data(articles_sorted)
-
-        push_data_static_range(sh = sh, dct = fun_data, metric_names = fun_headers, gsheet_headers = сurr_headers, matched_metrics = METRIC_RU,
                 articles_sorted = articles_sorted, col_num = col_num, values_first_row = values_first_row, sh_len=sh_len)
 
 
