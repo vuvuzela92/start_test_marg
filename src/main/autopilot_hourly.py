@@ -771,7 +771,12 @@ if __name__ == "__main__":
 
         push_data_static_range(sh = sh, dct = fun_data, metric_names = fun_headers, gsheet_headers = сurr_headers, matched_metrics = METRIC_RU,
                 articles_sorted = articles_sorted, col_num = col_num, values_first_row = values_first_row, sh_len=sh_len)
-
+        
+        current_time = datetime.now().strftime('%d.%m.%Y %H:%M:%S')
+        sh.update(
+            values=[[f'Актуализировано на {current_time}']],
+            range_name='A2'
+        )
 
         # ----- выгрузка остатков из юнитки -----
         try:
@@ -905,12 +910,6 @@ if __name__ == "__main__":
         except Exception as e:
             logging.error(f'Failed to add data for metric Органика:\n{e}')
 
-
-        current_time = datetime.now().strftime('%d.%m.%Y %H:%M:%S')
-        sh.update(
-            values=[[f'Актуализировано на {current_time}']],
-            range_name='A2'
-        )
         
     except Exception as e:
         logging.error(f'Error:\n{e}')
