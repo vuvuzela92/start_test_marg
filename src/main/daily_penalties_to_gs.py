@@ -10,14 +10,17 @@ import gspread
 from datetime import datetime, timedelta
 
 # my packages
-from utils.env_loader import *
 from utils.my_db_functions import create_connection_w_env
 from utils.utils import get_db_table, update_df_in_google
 
+from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ---- SET UP ----
 CREDS_PATH = os.getenv('CREDS_PATH')
-PRO_CREDS_PATH = os.getenv('PRO_CREDS_PATH')
+PRO_CREDS_PATH = Path(__file__).parent.parent.parent / "creds" / "creds.json"
 DB_DAILY_FIN = os.getenv('DB_DAILY_FIN')
 
 AUTOPILOT_TABLE_NAME = os.getenv('AUTOPILOT_TABLE_NAME')
@@ -120,12 +123,14 @@ if __name__ == "__main__":
     # в ПУ выгружаем только последние две недели
     df_for_pilot = clean_df[clean_df['Дата отчета'] >= (datetime.today() - timedelta(weeks=14)).strftime('%Y-%m-%d')]
 
-    gc = gspread.service_account(filename=PRO_CREDS_PATH)
-    wks = gc.open(MAIN_TABLE)
-    orders_sheet = wks.worksheet('Штрафы')
-    update_df_in_google(clean_df, orders_sheet)
+    # gc = gspread.service_account(filename=PRO_CREDS_PATH)
+    # gc = gspread.service_account(filename=PRO_CREDS_PATH)
+    # wks = gc.open(MAIN_TABLE)
+    # orders_sheet = wks.worksheet('Штрафы')
+    # update_df_in_google(clean_df, orders_sheet)
 
-    gc = gspread.service_account(filename=CREDS_PATH)
+    gc = gspread.service_account(filename=PRO_CREDS_PATH)
+    # gc = gspread.service_account(filename=CREDS_PATH)
     wks = gc.open(AUTOPILOT_TABLE_NAME)
     orders_sheet = wks.worksheet('Штрафы')
     update_df_in_google(df_for_pilot, orders_sheet)
