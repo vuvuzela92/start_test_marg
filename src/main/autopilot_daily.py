@@ -637,7 +637,7 @@ def push_data_static_range(df, headers, col_num, articles_sorted, values_first_r
                 range_end = my_gspread.calculate_range_end(range_start, col_num)  # Expand by col_num columns
 
                 # Format range: StartColRow:EndColRow
-                metric_range = f'{range_start}{values_first_row}:{range_end}{sh_len + 1}'
+                metric_range = f'{range_start}{values_first_row}:{range_end}{sh_len}'
 
                 # Push data (assumes my_gspread.add_data_to_range iss available)
                 my_gspread.add_data_to_range(sh, temp_df, metric_range, clean_range=False)
@@ -804,7 +804,8 @@ if __name__ == "__main__":
     sh = my_gspread.connect_to_remote_sheet(AUTOPILOT_TABLE_NAME, AUTOPILOT_SHEET_NAME)
     
     # сколько нужно выделить колонок под каждую метрику (по кол-ву дней)
-    col_num = 6
+    # col_num = 6
+    col_num = 7
 
     # начало диапазона
     values_first_row = 4

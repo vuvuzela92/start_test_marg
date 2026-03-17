@@ -456,7 +456,6 @@ if __name__ == "__main__":
     try:
     # Строим путь к creds.json относительно расположения текущего файла (add_new_items.py)
         creds_path = Path(__file__).parent.parent.parent / "creds" / "creds.json"
-        # creds_path = "creds/creds.json"
         my_client = gspread.service_account(filename=str(creds_path)) 
         if remote:
             new_items_table = my_client.open('Новый товар')

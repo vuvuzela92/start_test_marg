@@ -13,15 +13,20 @@ import logging
 import os
 
 # my packages
-from utils.env_loader import *
+# from utils.env_loader import *
 from utils.my_db_functions import create_connection_w_env, fetch_db_data_into_dict, list_to_sql_select
 from utils.my_gspread import column_number_to_letter, add_data_to_range, clean_number, connect_to_local_sheet
 from utils.my_general import open_json
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 # ---- SET UP ----
 
-CREDS_PATH=os.getenv('CREDS_PATH')
+CREDS_PATH=Path(__file__).parent.parent.parent / "creds" / "creds.json"
 PRO_CREDS_PATH=os.getenv('PRO_CREDS_PATH')
 
 UNIT_TABLE=os.getenv('UNIT_TABLE')
@@ -42,15 +47,15 @@ DB_ANALYSIS=os.getenv('DB_ANALYSIS')
 
 LOGS_PATH = os.getenv("LOGS_PATH")
 
-os.makedirs(LOGS_PATH, exist_ok=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(f"{LOGS_PATH}/china_buy.log", encoding='utf-8'),
-        logging.StreamHandler()
-    ]
-)
+# os.makedirs(LOGS_PATH, exist_ok=True)
+# logging.basicConfig(
+#     level=logging.INFO,
+#     format='%(asctime)s - %(levelname)s - %(message)s',
+#     handlers=[
+#         logging.FileHandler(f"{LOGS_PATH}/china_buy.log", encoding='utf-8'),
+#         logging.StreamHandler()
+#     ]
+# )
 
 
 WILDS_TO_EXCLUDE = [
