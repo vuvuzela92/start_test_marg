@@ -183,7 +183,7 @@ def load_data(rename = True):
         CASE WHEN promo_title != '' THEN 1 ELSE 0 END AS "Акции"
 
     FROM orders_articles_analyze
-    WHERE date >= CURRENT_DATE - INTERVAL '6 days'
+    WHERE date BETWEEN CURRENT_DATE - INTERVAL '6 days' AND CURRENT_DATE - INTERVAL '1 days'
     '''
 
     query_hist = f'''
