@@ -98,21 +98,37 @@ def get_articles_and_clients_df(wild = False):
     return df
 
 
-def get_articles_and_clients_dict(filter_articles=None, sh = None):
-    '''
-    Возвращает словарь {Артикул: ЛК} из таблицы UNIT.
-    Для тестов: можно передать артикулы в filter_articles, тогда вернёт значения только этих артикулов.
-    '''
+def get_articles_and_clients_dict(filter_articles=None, sh=None):
+
     try:
         if not sh:
             sh = connect_to_remote_sheet('UNIT 2.0 (tested)', 'MAIN (tested)')
-        articles = [int(x) for x in sh.col_values(1)[1:]] 
-        clients = sh.col_values(2)[1:]
-        clients = [client.capitalize() for client in clients]                   
-        result =  dict(zip(articles, clients))
+
+        raw_articles = sh.col_values(1)[1:]
+        raw_clients = sh.col_values(2)[1:]
+
+        articles = []
+        clients = []
+
+        for i, (art, client) in enumerate(zip(raw_articles, raw_clients), start=2):
+            try:
+                art_int = int(art.strip())
+                client_clean = client.capitalize()
+
+                articles.append(art_int)
+                clients.append(client_clean)
+
+            except Exception as e:
+                print(f"❌ Ошибка в строке {i}: article='{art}', client='{client}'")
+                raise
+
+        result = dict(zip(articles, clients))
+
         if filter_articles:
             result = {art: lk for art, lk in result.items() if art in filter_articles}
+
         return result
+
     except Exception as e:
         print(f'Ошибка при парсинге артикулов и ЛК из таблицы UNIT: {e}')
         raise
