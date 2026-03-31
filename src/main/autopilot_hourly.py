@@ -161,7 +161,7 @@ def get_fun(account: str, api_token: str, nmIDs: list):
 
                 if df.empty:
                     logging.warning(f"Пустой DataFrame для {account}")
-                    return df
+                    return pd.DataFrame()
 
                 logging.info(f"Успешно получено {len(df)} карточек для {account}")
 
@@ -226,15 +226,25 @@ def collect_full_funnel_data(articles_sorted = None):
     '''
     articles_clients = my_gspread.get_articles_and_clients_dict(articles_sorted)
     tokens = load_api_tokens()
-
+    
     all_dfs = []
+    logging.info(f"Собираем данные по воронке со всех ЛК")
     for account, api_token in tokens.items():
         account_sku = [art for art, lk in articles_clients.items() if lk == account]
         fun_df = get_fun(account, api_token, account_sku)
-        fun_df = fun_df[['nmID', 'openCardCount', 'addToCartCount', 'ordersCount', 'ordersSumRub', 'addToCartPercent', 'cartToOrderPercent', 'stocksWb']]
+        
+        # Пропускаем пустые DataFrame
+        if fun_df.empty:
+            logging.warning(f"Пропускаем аккаунт {account} — пустые данные")
+            continue
+        
+        # Выбираем нужные колонки
+        fun_df = fun_df[['nmID', 'openCardCount', 'addToCartCount', 'ordersCount', 
+                        'ordersSumRub', 'addToCartPercent', 'cartToOrderPercent', 'stocksWb']]
         all_dfs.append(fun_df)
     
     if all_dfs:
+        logging.info(f"Соединяем датафреймы")
         final_df = pd.concat(all_dfs, ignore_index=True)
         column_mapping = {
             'openCardCount': 'open_card_count',
@@ -386,28 +396,56 @@ def parse_data_from_WB(articles, return_keys=None, handle_nested_keys=None, show
 def load_adv_spend(articles_sorted=None):
     '''
     Возвращает данные по Сумме затрат из API Кометы.
-    При articles_sorted=None можно использовать как загрузчик данных кометы по активным позициям.
-    При передаче articles_sorted форматирует под полный список артикулов: преобразует данные в сводную таблицу (пивот),
-    суммируя затраты по артикулам, добавляет отсутствующие артикулы из списка с нулевыми значениями
     '''
     cometa_api_key = os.getenv('COMETA_API_KEY')
     url_autopilots = 'https://api.e-comet.io/v1/autopilots'
     headers = {'Authorization': cometa_api_key}
-    response = requests.get(url_autopilots, headers=headers)
-    result = {i['product_id']:i['budget_spent_today'] for i in response.json() if i['active'] == True}
+    
+    try:
+        response = requests.get(url_autopilots, headers=headers, timeout=30)
+        response.raise_for_status()
+        response_data = response.json()
+        
+        # 🔍 Проверка: если пришёл объект с ошибкой вместо списка
+        if isinstance(response_data, dict):
+            logging.error(f"Cometa API вернул ошибку: {response_data}")
+            # Возвращаем нули для всех артикулов, чтобы скрипт не падал
+            if articles_sorted:
+                return {article: 0 for article in articles_sorted}
+            return {}
+        
+        # 🔍 Дополнительная проверка: если список, но пустой
+        if not isinstance(response_data, list):
+            logging.error(f"Неожиданный формат ответа от Cometa API: {type(response_data)}")
+            if articles_sorted:
+                return {article: 0 for article in articles_sorted}
+            return {}
+            
+        result = {
+            i['product_id']: i['budget_spent_today'] 
+            for i in response_data 
+            if i.get('active') == True and 'product_id' in i and 'budget_spent_today' in i
+        }
+
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Ошибка запроса к Cometa API: {e}")
+        if articles_sorted:
+            return {article: 0 for article in articles_sorted}
+        return {}
+    except Exception as e:
+        logging.error(f"Неожиданная ошибка при загрузке adv_spend: {e}")
+        if articles_sorted:
+            return {article: 0 for article in articles_sorted}
+        return {}
 
     if articles_sorted:
-
         spend_agg = {}
-
-        # aggregating
+        # Агрегация (на случай дубликатов)
         for article, budget in result.items():
             spend_agg[article] = spend_agg.get(article, 0) + budget
 
-        # проставляем нули на позициях, которых нет в апи
-        result = {}
-        for article in articles_sorted:
-            result[article] = spend_agg.get(article, 0) * 1.1
+        # Проставляем нули на позициях, которых нет в ответе API
+        result = {article: spend_agg.get(article, 0) * 1.1 for article in articles_sorted}
 
     return result
 
@@ -764,11 +802,9 @@ if __name__ == "__main__":
     #     matched_metrics = json.load(f)
 
     try:
-        
-
         # ----- funnel -----
         fun_data, fun_headers = collect_full_funnel_data(articles_sorted)
-
+        logging.info('Данные по воронке успешно собраны со всех ЛК.')
         push_data_static_range(sh = sh, dct = fun_data, metric_names = fun_headers, gsheet_headers = сurr_headers, matched_metrics = METRIC_RU,
                 articles_sorted = articles_sorted, col_num = col_num, values_first_row = values_first_row, sh_len=sh_len)
         
