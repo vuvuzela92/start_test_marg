@@ -28,57 +28,68 @@ def load_data_from_db(round_price = False):
     !!! round_price стоит использовать только при обновлении всех записей, новые цены ок и без округления !!!
     '''
 
+    # Количество дней, за которые выгружаются данные (включая вчерашний день, исключая сегодняшний)
+    days_count = 2
+
     # запрос
     query = f'''
-    WITH latest_purchase_price AS (
-        SELECT DISTINCT ON (local_vendor_code)
-            supply_date,
-            guid,
-            document_number,
-            local_vendor_code,
-            product_name,
-            event_status,
-            amount_with_vat,
-            quantity,
-            ROUND(amount_with_vat / quantity, 2) AS latest_price_per_item, -- renamed
-            currency,
-            planned_cost
-        FROM supply_to_sellers_warehouse
-        WHERE is_valid = TRUE
-        -- AND event_status = "Проведён"
-        AND local_vendor_code LIKE 'wild%'
-        AND supplier_name != 'РВБ ООО'
-        AND quantity != 0
-        ORDER BY local_vendor_code, supply_date DESC
-    )
-    SELECT
-        lpp.supply_date,
-        lpp.guid,
-        lpp.document_number,
-        lpp.local_vendor_code,
-        lpp.product_name,
-        lpp.amount_with_vat,
-        lpp.quantity,
-        latest_price_per_item,
-        -- FINAL price_per_item
-        CASE
-            WHEN lpp.currency IS NOT NULL AND lpp.currency != '643'
-                THEN lpp.planned_cost
-            ELSE lpp.latest_price_per_item
-        END AS price_per_item,
-        lpp.currency,
-        lpp.planned_cost,
-        -- Alarm column
-        CASE
-            WHEN lpp.currency IS NOT NULL
-            AND lpp.currency != '643'
-            AND (lpp.planned_cost IS NULL OR lpp.planned_cost = 0)
-                THEN 'ALARM: planned_cost missing'
-            ELSE NULL
-        END AS alarm_flag
-    FROM latest_purchase_price lpp
-    ORDER BY lpp.local_vendor_code;
-    '''
+        WITH latest_purchase_price AS (
+            SELECT DISTINCT ON (local_vendor_code)
+                supply_date,
+                guid,
+                document_number,
+                local_vendor_code,
+                product_name,
+                event_status,
+                amount_with_vat,
+                quantity,
+                ROUND(amount_with_vat / quantity, 2) AS latest_price_per_item,
+                currency,
+                planned_cost
+            FROM supply_to_sellers_warehouse
+            WHERE is_valid = TRUE
+            -- AND event_status = 'Проведён'
+            AND local_vendor_code LIKE 'wild%'
+            AND supplier_name != 'РВБ ООО'
+            AND quantity != 0
+
+            -- ИЗМЕНЕНО: ограничиваем данные только вчера и позавчера
+            AND supply_date >= CURRENT_DATE - INTERVAL '{days_count} days'
+            AND supply_date < CURRENT_DATE
+
+            ORDER BY local_vendor_code, supply_date DESC
+        )
+        SELECT
+            lpp.supply_date,
+            lpp.guid,
+            lpp.document_number,
+            lpp.local_vendor_code,
+            lpp.product_name,
+            lpp.amount_with_vat,
+            lpp.quantity,
+            lpp.latest_price_per_item,
+
+            -- FINAL price_per_item
+            CASE
+                WHEN lpp.currency IS NOT NULL AND lpp.currency != '643'
+                    THEN lpp.planned_cost
+                ELSE lpp.latest_price_per_item
+            END AS price_per_item,
+
+            lpp.currency,
+            lpp.planned_cost,
+
+            -- Alarm column
+            CASE
+                WHEN lpp.currency IS NOT NULL
+                AND lpp.currency != '643'
+                AND (lpp.planned_cost IS NULL OR lpp.planned_cost = 0)
+                    THEN 'ALARM: planned_cost missing'
+                ELSE NULL
+            END AS alarm_flag
+        FROM latest_purchase_price lpp
+        ORDER BY lpp.local_vendor_code;
+        '''
 
     # выгружаем в df
     data = get_df_from_db(query)
