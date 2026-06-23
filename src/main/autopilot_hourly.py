@@ -794,7 +794,7 @@ if __name__ == "__main__":
 
     # for tests
     articles_raw = sh.col_values(1)[3:]
-    articles_sorted = [int(n) for n in articles_raw]
+    articles_sorted = [int(n) for n in articles_raw if n.isdigit()]
 
 
     # берём метрики (рус и англ) из файла
